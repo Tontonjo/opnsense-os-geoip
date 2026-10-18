@@ -1,0 +1,15 @@
+<form>
+    <!-- Version: 2.1.0 -->
+    <field>
+        <id>osgeoip.general.enabled</id>
+        <label>Automatic update</label>
+        <type>checkbox</type>
+        <help>Rebuild the GeoIP country lists every day from the IPLocate.io database. A scheduled task is created in System: Settings: Cron.</help>
+    </field>
+    <field>
+        <id>osgeoip.general.hour</id>
+        <label>Update hour</label>
+        <type>text</type>
+        <help>Hour of the daily update, from 0 to 23 (firewall local time). The update starts at minute 17.</help>
+    </field>
+</form>

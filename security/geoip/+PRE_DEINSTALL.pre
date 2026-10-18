@@ -1,0 +1,7 @@
+# +PRE_DEINSTALL.pre (os-geoip)
+# Version: 2.0.0
+# Removes the custom menu icon from the theme stylesheets, and clears the GeoIP URL
+# of Firewall: Aliases when it is the plugin URL.
+/usr/local/bin/python3 /usr/local/opnsense/scripts/OPNsense/OsGeoip/menu_icon.py remove > /dev/null 2>&1
+rm -f /tmp/opnsense_menu_cache.xml
+/usr/local/bin/php /usr/local/opnsense/scripts/OPNsense/OsGeoip/geoip_url.php clear > /dev/null 2>&1

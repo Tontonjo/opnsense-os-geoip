@@ -1,0 +1,13 @@
+# +POST_INSTALL.post (os-geoip)
+# Version: 2.1.0
+# Adds the custom menu icon to the theme stylesheets and refreshes the menu cache.
+# When the plugin lists already exist (upgrade), sets the GeoIP URL of Firewall: Aliases
+# to the plugin URL and writes the GeoIP source files.
+# On a first install, applies the default settings (automatic update enabled).
+/usr/local/bin/python3 /usr/local/opnsense/scripts/OPNsense/OsGeoip/menu_icon.py install > /dev/null 2>&1
+rm -f /tmp/opnsense_menu_cache.xml
+/usr/local/bin/php /usr/local/opnsense/scripts/OPNsense/OsGeoip/apply_defaults.php > /dev/null 2>&1
+if [ -f /var/db/osgeoip/stats.json ]; then
+	/usr/local/bin/php /usr/local/opnsense/scripts/OPNsense/OsGeoip/geoip_url.php set > /dev/null 2>&1
+	/usr/local/bin/python3 /usr/local/opnsense/scripts/OPNsense/OsGeoip/osgeoip.py sync > /dev/null 2>&1
+fi

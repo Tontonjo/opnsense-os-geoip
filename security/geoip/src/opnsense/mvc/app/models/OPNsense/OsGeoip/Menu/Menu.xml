@@ -1,0 +1,7 @@
+<menu>
+    <!-- Version: 2.0.0 -->
+    <!-- "osgeoip-icon" draws the custom globe and shield icon (see menu_icon.py); "fa-globe" is the fallback. -->
+    <Firewall>
+        <OsGeoip VisibleName="GeoIP" cssClass="fa fa-globe fa-fw osgeoip-icon" url="/ui/osgeoip/"/>
+    </Firewall>
+</menu>

@@ -1,0 +1,11 @@
+<acl>
+    <!-- Version: 2.0.0 -->
+    <page-firewall-osgeoip>
+        <name>Firewall: GeoIP</name>
+        <description>Allow access to the GeoIP plugin page</description>
+        <patterns>
+            <pattern>ui/osgeoip/*</pattern>
+            <pattern>api/osgeoip/*</pattern>
+        </patterns>
+    </page-firewall-osgeoip>
+</acl>

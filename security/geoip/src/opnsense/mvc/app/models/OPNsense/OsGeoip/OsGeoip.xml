@@ -1,0 +1,26 @@
+<model>
+    <!-- Version: 2.1.0 -->
+    <mount>//OPNsense/osgeoip</mount>
+    <version>1.0.0</version>
+    <description>GeoIP country lists built from the IPLocate.io database</description>
+    <items>
+        <general>
+            <!-- Enabled by default, the scheduled task is created at install (apply_defaults.php). -->
+            <enabled type="BooleanField">
+                <Default>1</Default>
+                <Required>Y</Required>
+            </enabled>
+            <hour type="IntegerField">
+                <Default>3</Default>
+                <MinimumValue>0</MinimumValue>
+                <MaximumValue>23</MaximumValue>
+                <Required>Y</Required>
+                <ValidationMessage>Please enter an hour between 0 and 23.</ValidationMessage>
+            </hour>
+            <!-- UUID of the scheduled task created in System: Settings: Cron (internal). -->
+            <cronUuid type="TextField">
+                <Mask>/^([0-9a-f-]{36})?$/</Mask>
+            </cronUuid>
+        </general>
+    </items>
+</model>
