@@ -1,6 +1,5 @@
 # os-geoip
 
-<img width="635" height="425" alt="image" src="https://github.com/user-attachments/assets/25670c61-fdab-44e1-a2b3-6cd6ed1bdc93" />
 
 ## Tonton Jo  
 ### Join the community:
