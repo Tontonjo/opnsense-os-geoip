@@ -1,6 +1,5 @@
 # os-geoip
 
-<img width="488" height="355" alt="image" src="https://github.com/user-attachments/assets/f33f0c64-538f-4fad-8419-07823ca56df5" />
 
 ## Tonton Jo  
 ### Join the community:
@@ -39,18 +38,6 @@ This plugin replaces **os-rir-geoip** (version 1.x, lists built from the RIR sta
 - Outbound HTTPS from the firewall to `github.com` and `media.githubusercontent.com` (about 9 MB per update).
 - No URL of your own in Firewall: Aliases: GeoIP settings (otherwise OPNsense overwrites the lists).
   The plugin sets its own local URL there (`file:///var/db/osgeoip/lists`), see *Good to know*.
-
-## Migration from os-rir-geoip
-
-1. **Firewall: RIR GeoIP**: untick **Automatic update** and click **Save** (removes its scheduled task).
-2. Remove the old plugin:
-
-```sh
-pkg delete -y os-rir-geoip
-/usr/local/opnsense/scripts/firmware/register.php remove os-rir-geoip
-```
-
-3. Install os-geoip (see below), then follow *Quick start*. Your GeoIP aliases are kept.
 
 ## Installation
 
