@@ -2,7 +2,7 @@
 
 """
     osgeoip.py
-    Version: 2.0.0
+    Version: 2.2.0
 
     Copyright (C) 2026 Async IT
     All rights reserved.
@@ -56,7 +56,14 @@
         lookup   print as JSON the country of an IP address, or of every address of a
                  hostname, found in the current lists (used by the plugin page)
 
+    Lookup index: each update also writes /var/db/osgeoip/index-IPv4.bin and index-IPv6.bin,
+    fixed size records (start address, prefix length, country code) sorted by address,
+    searched by bisection. A missing or outdated index (older than the lists, for example
+    after an upgrade or when /var is in memory) is rebuilt from the lists by the next lookup.
+
     Changelog:
+        2.2.0  Lookup uses a sorted binary index (bisection, a few reads per address)
+               instead of reading the country lists line by line.
         2.0.0  Plugin renamed os-geoip (was os-rir-geoip, script rirgeoip.py).
                Source replaced: IPLocate.io IP to Country database instead of the RIR
                statistics. Streamed parsing (low memory), faster lookup.
@@ -73,6 +80,7 @@ import csv
 import datetime
 import fcntl
 import hashlib
+import heapq
 import io
 import json
 import os
@@ -114,6 +122,7 @@ STATS_FILE = STATE_DIR + '/stats.json'
 LOCK_FILE = STATE_DIR + '/update.lock'
 PROGRESS_FILE = STATE_DIR + '/progress.json'
 DOWNLOAD_FILE = STATE_DIR + '/download.zip'
+INDEX_FILE = STATE_DIR + '/index-%s.bin'   # %s: IPv4 or IPv6
 
 DOWNLOAD_TIMEOUT = 300
 DOWNLOAD_CHUNK = 65536
@@ -184,6 +193,54 @@ class Progress:
                 return json.load(handle).get('progress')
         except (OSError, ValueError, AttributeError):
             return None
+
+
+class IndexBuilder:
+    """
+    Builds the lookup index of one IP version: fixed size records (start address big
+    endian, prefix length on 1 byte, country code on 2 bytes) sorted by start address.
+    Records are collected unsorted in a temporary file, where they come in ascending runs
+    (one per prefix length in the source, a few per country list), merged by write().
+    """
+
+    def __init__(self, version, work_dir):
+        self.address_size = FAMILIES[version][1] // 8
+        self.record_size = self.address_size + 3
+        self._path = os.path.join(work_dir, 'index-%s.unsorted' % FAMILIES[version][2])
+        self._handle = open(self._path, 'wb')
+        self._run_starts = [0]   # record numbers where an ascending run starts
+        self._count = 0
+        self._last = b''
+
+    def add(self, start, prefix, country_code):
+        record = start.to_bytes(self.address_size, 'big') + bytes((prefix,)) + country_code.encode('ascii')
+        if record < self._last:
+            self._run_starts.append(self._count)
+        self._last = record
+        self._handle.write(record)
+        self._count += 1
+
+    def close(self):
+        self._handle.close()
+
+    def write(self, path):
+        """Merges the runs and writes the sorted index to path (atomic replace)."""
+        self._handle.close()
+        with open(self._path, 'rb') as handle:
+            data = handle.read()
+        os.remove(self._path)
+
+        size = self.record_size
+        bounds = self._run_starts + [self._count]
+        runs = [
+            (data[offset:offset + size] for offset in range(bounds[i] * size, bounds[i + 1] * size, size))
+            for i in range(len(bounds) - 1)
+        ]
+        handle, temporary_path = tempfile.mkstemp(prefix='.index-', dir=os.path.dirname(path))
+        with os.fdopen(handle, 'wb') as output:
+            output.writelines(heapq.merge(*runs))
+        os.chmod(temporary_path, 0o644)
+        os.replace(temporary_path, path)
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +411,9 @@ def write_country_files(on_progress):
     handles = {}
     counts = {4: 0, 6: 0}
     countries = set()
+    os.makedirs(STATE_DIR, exist_ok=True)
+    index_dir = tempfile.mkdtemp(prefix='.index-', dir=STATE_DIR)
+    builders = {version: IndexBuilder(version, index_dir) for version in FAMILIES}
 
     try:
         try:
@@ -387,6 +447,7 @@ def write_country_files(on_progress):
                 if handle is None:
                     handle = handles[key] = open(os.path.join(work_dir, key), 'w')
                 handle.write(format_network(*parsed) + '\n')
+                builders[version].add(parsed[1], parsed[2], country_code)
                 counts[version] += 1
                 countries.add(country_code)
             text.close()
@@ -411,10 +472,17 @@ def write_country_files(on_progress):
             anchor_path = os.path.join(TARGET_DIR, ANCHOR_FILE)
             os.replace(os.path.join(work_dir, ANCHOR_FILE), anchor_path)
             os.utime(anchor_path)
+
+        # Written after the anchor file, so the index is newer than the lists (see index_is_current).
+        for version, builder in builders.items():
+            builder.write(index_path(version))
     finally:
         for handle in handles.values():
             handle.close()
+        for builder in builders.values():
+            builder.close()
         shutil.rmtree(work_dir, ignore_errors=True)
+        shutil.rmtree(index_dir, ignore_errors=True)
 
     return {
         'countries': len(countries),
@@ -464,39 +532,92 @@ def resolve_target(target):
     return addresses
 
 
+def index_path(version):
+    return INDEX_FILE % FAMILIES[version][2]
+
+
+def index_is_current():
+    """Returns True when both index files exist, are complete and are not older than the lists."""
+    lists_time = os.path.getmtime(os.path.join(TARGET_DIR, ANCHOR_FILE))
+    for version in FAMILIES:
+        path = index_path(version)
+        if not os.path.isfile(path) or os.path.getmtime(path) < lists_time:
+            return False
+        if os.path.getsize(path) % (FAMILIES[version][1] // 8 + 3):
+            return False
+    return True
+
+
+def build_index_from_lists():
+    """Rebuilds both index files from the country lists of TARGET_DIR (a few seconds)."""
+    os.makedirs(STATE_DIR, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='.index-', dir=STATE_DIR) as work_dir:
+        builders = {version: IndexBuilder(version, work_dir) for version in FAMILIES}
+        try:
+            for file_name in sorted(os.listdir(TARGET_DIR)):
+                if not COUNTRY_FILE_PATTERN.match(file_name):
+                    continue
+                with open(os.path.join(TARGET_DIR, file_name)) as handle:
+                    for line in handle:
+                        parsed = parse_network(line.strip())
+                        if parsed is not None:
+                            builders[parsed[0]].add(parsed[1], parsed[2], file_name[:2])
+            for version, builder in builders.items():
+                builder.write(index_path(version))
+        finally:
+            for builder in builders.values():
+                builder.close()
+
+
+def search_index(handle, version, value):
+    """
+    Returns the country code of an address (integer) from an open index file,
+    or an empty string when no network contains it. Bisection on the start addresses.
+    """
+    bits = FAMILIES[version][1]
+    address_size = bits // 8
+    record_size = address_size + 3
+    key = value.to_bytes(address_size, 'big')
+
+    low, high = 0, os.fstat(handle.fileno()).st_size // record_size
+    while low < high:
+        middle = (low + high) // 2
+        handle.seek(middle * record_size)
+        if handle.read(address_size) <= key:
+            low = middle + 1
+        else:
+            high = middle
+    if low == 0:
+        return ''
+
+    # Last network starting at or before the address: it holds the address if their prefixes match.
+    handle.seek((low - 1) * record_size)
+    record = handle.read(record_size)
+    host_bits = bits - record[address_size]
+    if int.from_bytes(record[:address_size], 'big') >> host_bits != value >> host_bits:
+        return ''
+    return record[address_size + 1:].decode('ascii')
+
+
 def find_countries(addresses):
     """
     Returns a dictionary {address: country code}, with an empty code when the address
-    is in no list (private, reserved or unknown range). Each country list is read
-    at most once, and the search stops as soon as every address is found.
+    is in no list (private, reserved or unknown range). Rebuilds the index first when needed.
     """
-    countries = {address: '' for address in addresses}
-    # (address, version, address as an integer) of each address to find.
-    pending_all = [(address,) + parse_address(address) for address in addresses]
+    if not index_is_current():
+        build_index_from_lists()
 
-    for file_name in sorted(os.listdir(TARGET_DIR)):
-        if not COUNTRY_FILE_PATTERN.match(file_name):
-            continue
-        version = 4 if file_name.endswith('IPv4') else 6
-        bits = FAMILIES[version][1]
-        pending = [item for item in pending_all if item[1] == version and not countries[item[0]]]
-        if not pending:
-            continue
-
-        with open(os.path.join(TARGET_DIR, file_name)) as handle:
-            for line in handle:
-                parsed = parse_network(line.strip())
-                if parsed is None:
-                    continue   # empty or malformed line
-                host_bits = bits - parsed[2]
-                for item in [item for item in pending if item[2] >> host_bits == parsed[1] >> host_bits]:
-                    countries[item[0]] = file_name[:2]
-                    pending.remove(item)
-                if not pending:
-                    break
-
-        if all(countries.values()):
-            break
+    countries = {}
+    handles = {}
+    try:
+        for address in addresses:
+            version, value = parse_address(address)
+            if version not in handles:
+                handles[version] = open(index_path(version), 'rb')
+            countries[address] = search_index(handles[version], version, value)
+    finally:
+        for handle in handles.values():
+            handle.close()
     return countries
 
 
